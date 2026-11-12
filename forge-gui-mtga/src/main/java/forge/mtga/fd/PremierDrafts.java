@@ -154,7 +154,7 @@ final class PremierDrafts {
             else missing++;
         }
         if (missing > 0) System.out.println("[mtga] FD premier: cube " + file + ": " + missing + " cards have no client card (run the card DB step again)");
-        return new Spec(CUBE_KEY, null, file, "Vintage Cube", CollationIds.of("POWEREDCUBE"), grps);
+        return new Spec(CUBE_KEY, null, file, System.getProperty("mtga.premier.cubeTitle", "Vintage Cube"), CollationIds.of("POWEREDCUBE"), grps);
     }
 
     Spec spec(String eventName) {
