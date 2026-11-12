@@ -218,7 +218,7 @@ public final class ForgeMtgaMain {
             red.clear();
             red.put("Mountain", 40);
         }
-        if ("protection".equals(rig) || "protection-artifact".equals(rig)) {
+        if ("protection".equals(rig) || "protection-artifact".equals(rig) || (rig != null && rig.startsWith("fellwar"))) {
             green.clear(); green.put("Plains", 40);
             red.clear(); red.put("Wastes", 40);
         }

@@ -166,6 +166,16 @@ public final class SelfPlay {
                 System.out.println("  protection rig: choice asked " + fc.protectionAsked + ", chosen protection applied " + fc.protectionApplied + (ok ? "" : " (WRONG)"));
                 if (!ok) failed++;
             }
+            if (choiceRig.startsWith("fellwar")) {
+                boolean negative = choiceRig.equals("fellwar-empty") || choiceRig.equals("fellwar-colorless");
+                boolean ok = negative ? fc.fellwarChecked && !fc.fellwarOffered
+                        : fc.fellwarOffered && fc.fellwarOptions && fc.fellwarTapped && fc.fellwarPaid
+                            && (!choiceRig.equals("fellwar-auto") || fc.fellwarPreview);
+                System.out.println("  " + choiceRig + " rig: checked " + fc.fellwarChecked + ", offered " + fc.fellwarOffered
+                        + ", colors correct " + fc.fellwarOptions + ", tapped " + fc.fellwarTapped + ", spell cast " + fc.fellwarPaid
+                        + ", auto preview " + fc.fellwarPreview + (ok ? "" : " (WRONG)"));
+                if (!ok) failed++;
+            }
             if ("spyglass".equals(System.getProperty("mtga.rig"))) {
                 boolean ok = fc.spyglassNamed && fc.spyglassBefore && fc.spyglassAfter && fc.spyglassMana;
                 System.out.println("  spyglass rig: name chosen " + fc.spyglassNamed + ", Liliana initially offered " + fc.spyglassBefore + ", blocked after naming " + fc.spyglassAfter + ", mana available " + fc.spyglassMana + (ok ? "" : " (WRONG)"));
@@ -707,6 +717,7 @@ public final class SelfPlay {
         }
 
         boolean protectionAsked, protectionApplied;
+        boolean fellwarChecked, fellwarOffered, fellwarOptions, fellwarTapped, fellwarPaid, fellwarPreview;
         boolean spyglassNamed, spyglassBefore, spyglassAfter, spyglassMana;
         boolean delugeAsked, delugePaid, delugeKilled;
         boolean samiOffered, roomBothOffered, roomUnlockOffered, costChoiceAsked, offspringAsked;
@@ -757,6 +768,27 @@ public final class SelfPlay {
                             || (a.getActionType() == ActionType.ActionType_Cast && name.startsWith("Apostle's Blessing")))) return a;
                 }
             }
+            if (rig.startsWith("fellwar")) {
+                fellwarChecked = true;
+                boolean negative = rig.equals("fellwar-empty") || rig.equals("fellwar-colorless");
+                for (Action a : acts) {
+                    if (a.getActionType() != ActionType.ActionType_Activate_Mana || !String.valueOf(debugName(a.getInstanceId())).startsWith("Fellwar Stone")) continue;
+                    fellwarOffered = true;
+                    if (negative) problem("Fellwar Stone offered without an opposing colored mana source");
+                    Set<ManaColor> colors = new HashSet<>();
+                    for (ManaPaymentOption option : a.getManaPaymentOptionsList()) for (ManaInfo mana : option.getManaList()) colors.add(mana.getColor());
+                    fellwarOptions |= colors.equals(Set.of(ManaColor.ManaColor_Green, ManaColor.ManaColor_Blue));
+                    if (!colors.equals(Set.of(ManaColor.ManaColor_Green, ManaColor.ManaColor_Blue))) problem("Fellwar Stone color options " + colors);
+                    if (rig.equals("fellwar") && !fellwarTapped) return a;
+                }
+                for (Action a : acts) if (a.getActionType() == ActionType.ActionType_Cast && String.valueOf(debugName(a.getInstanceId())).startsWith("Llanowar Elves")) {
+                    for (AutoTapAction tap : a.getAutoTapSolution().getAutoTapActionsList()) {
+                        if (String.valueOf(debugName(tap.getInstanceId())).startsWith("Fellwar Stone")) fellwarPreview = true;
+                    }
+                    return a;
+                }
+            }
+
             if ("addcost".equals(System.getProperty("mtga.rig"))) {      // rig addcost: cast Iridescent Vinelasher first (3 mana: offspring must be asked), then Bitter Triumph
                 for (String n : List.of("Iridescent", "Bitter")) {
                     for (Action a : acts) if (a.getActionType() == ActionType.ActionType_Cast && String.valueOf(debugName(a.getInstanceId())).startsWith(n)) return a;
@@ -864,7 +896,7 @@ public final class SelfPlay {
                 }
                 case GREMessageType_MulliganReq -> {
                     requests++;
-                    boolean mull = mulligans < 2 && rnd.nextInt(3) == 0 && !"sami".equals(System.getProperty("mtga.rig")) && !"mill".equals(System.getProperty("mtga.rig")) && !"room".equals(System.getProperty("mtga.rig")) && !"arrow".equals(System.getProperty("mtga.rig")) && !"phasing".equals(System.getProperty("mtga.rig")) && !"addcost".equals(System.getProperty("mtga.rig")) && !"deluge".equals(System.getProperty("mtga.rig")) && !"spyglass".equals(System.getProperty("mtga.rig")) && !System.getProperty("mtga.rig", "").startsWith("protection");      // a rig keeps its hand: a mulligan would shuffle the rigged cards away
+                    boolean mull = mulligans < 2 && rnd.nextInt(3) == 0 && !"sami".equals(System.getProperty("mtga.rig")) && !"mill".equals(System.getProperty("mtga.rig")) && !"room".equals(System.getProperty("mtga.rig")) && !"arrow".equals(System.getProperty("mtga.rig")) && !"phasing".equals(System.getProperty("mtga.rig")) && !"addcost".equals(System.getProperty("mtga.rig")) && !"deluge".equals(System.getProperty("mtga.rig")) && !"spyglass".equals(System.getProperty("mtga.rig")) && !System.getProperty("mtga.rig", "").startsWith("protection") && !System.getProperty("mtga.rig", "").startsWith("fellwar");      // a rig keeps its hand: a mulligan would shuffle the rigged cards away
                     if (mull) mulligans++;
                     // rigs (-Dmtga.rig) replace the opening hand on purpose
                     if (zone(32).getObjectInstanceIdsCount() != 7 && System.getProperty("mtga.rig") == null) problem("mulligan offered with hand of " + zone(32).getObjectInstanceIdsCount());
@@ -1533,6 +1565,10 @@ public final class SelfPlay {
                     String keyword = rig.equals("protection-artifact") ? "Protection:Artifact" : "Protection from blue";
                     protectionApplied |= backend.debugHasKeyword(o.getInstanceId(), keyword);
                 }
+                if (rig.startsWith("fellwar")) {
+                    if (name.startsWith("Fellwar Stone")) fellwarTapped |= o.getIsTapped();
+                    if (name.startsWith("Llanowar Elves") && o.getZoneId() == 28) fellwarPaid = true;
+                }
             }
             if (delugeAsked) for (GameObjectInfo o : objs.values()) {
                 ZoneInfo z = zones.get(o.getZoneId());
@@ -1584,6 +1620,11 @@ public final class SelfPlay {
                 }
             }
             ManaPaymentOption pick = a.getManaPaymentOptions(rnd.nextInt(a.getManaPaymentOptionsCount()));
+            if ("fellwar".equals(System.getProperty("mtga.rig")) && String.valueOf(debugName(a.getInstanceId())).startsWith("Fellwar Stone")) {
+                for (ManaPaymentOption option : a.getManaPaymentOptionsList()) {
+                    if (option.getManaList().stream().anyMatch(m -> m.getColor() == ManaColor.ManaColor_Green)) pick = option;
+                }
+            }
             return a.toBuilder().clearManaPaymentOptions().addManaPaymentOptions(pick).build();
         }
 
