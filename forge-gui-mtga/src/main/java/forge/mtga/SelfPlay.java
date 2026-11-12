@@ -160,6 +160,12 @@ public final class SelfPlay {
                 System.out.println("  mill rig: largest move " + fc.massMoves + " cards, " + fc.maxMillAnimated + " Mill animations" + (ok ? "" : "  (WRONG)"));
                 if (!ok) failed++;
             }
+            String choiceRig = System.getProperty("mtga.rig", "");
+            if (choiceRig.startsWith("protection")) {
+                boolean ok = fc.protectionAsked && fc.protectionApplied;
+                System.out.println("  protection rig: choice asked " + fc.protectionAsked + ", chosen protection applied " + fc.protectionApplied + (ok ? "" : " (WRONG)"));
+                if (!ok) failed++;
+            }
             if ("spyglass".equals(System.getProperty("mtga.rig"))) {
                 boolean ok = fc.spyglassNamed && fc.spyglassBefore && fc.spyglassAfter && fc.spyglassMana;
                 System.out.println("  spyglass rig: name chosen " + fc.spyglassNamed + ", Liliana initially offered " + fc.spyglassBefore + ", blocked after naming " + fc.spyglassAfter + ", mana available " + fc.spyglassMana + (ok ? "" : " (WRONG)"));
@@ -700,6 +706,7 @@ public final class SelfPlay {
             return b.toString();
         }
 
+        boolean protectionAsked, protectionApplied;
         boolean spyglassNamed, spyglassBefore, spyglassAfter, spyglassMana;
         boolean delugeAsked, delugePaid, delugeKilled;
         boolean samiOffered, roomBothOffered, roomUnlockOffered, costChoiceAsked, offspringAsked;
@@ -742,6 +749,14 @@ public final class SelfPlay {
         private static ClientToGREMessage.Builder msg(ClientMessageType t) { return ClientToGREMessage.newBuilder().setType(t); }
 
         private Action preferred(List<Action> acts) {
+            String rig = System.getProperty("mtga.rig", "");
+            if (rig.startsWith("protection")) {
+                for (Action a : acts) {
+                    String name = String.valueOf(debugName(a.getInstanceId()));
+                    if (!protectionAsked && ((a.getActionType() == ActionType.ActionType_Activate && name.startsWith("Mother of Runes"))
+                            || (a.getActionType() == ActionType.ActionType_Cast && name.startsWith("Apostle's Blessing")))) return a;
+                }
+            }
             if ("addcost".equals(System.getProperty("mtga.rig"))) {      // rig addcost: cast Iridescent Vinelasher first (3 mana: offspring must be asked), then Bitter Triumph
                 for (String n : List.of("Iridescent", "Bitter")) {
                     for (Action a : acts) if (a.getActionType() == ActionType.ActionType_Cast && String.valueOf(debugName(a.getInstanceId())).startsWith(n)) return a;
@@ -849,7 +864,7 @@ public final class SelfPlay {
                 }
                 case GREMessageType_MulliganReq -> {
                     requests++;
-                    boolean mull = mulligans < 2 && rnd.nextInt(3) == 0 && !"sami".equals(System.getProperty("mtga.rig")) && !"mill".equals(System.getProperty("mtga.rig")) && !"room".equals(System.getProperty("mtga.rig")) && !"arrow".equals(System.getProperty("mtga.rig")) && !"phasing".equals(System.getProperty("mtga.rig")) && !"addcost".equals(System.getProperty("mtga.rig")) && !"deluge".equals(System.getProperty("mtga.rig")) && !"spyglass".equals(System.getProperty("mtga.rig"));      // a rig keeps its hand: a mulligan would shuffle the rigged cards away
+                    boolean mull = mulligans < 2 && rnd.nextInt(3) == 0 && !"sami".equals(System.getProperty("mtga.rig")) && !"mill".equals(System.getProperty("mtga.rig")) && !"room".equals(System.getProperty("mtga.rig")) && !"arrow".equals(System.getProperty("mtga.rig")) && !"phasing".equals(System.getProperty("mtga.rig")) && !"addcost".equals(System.getProperty("mtga.rig")) && !"deluge".equals(System.getProperty("mtga.rig")) && !"spyglass".equals(System.getProperty("mtga.rig")) && !System.getProperty("mtga.rig", "").startsWith("protection");      // a rig keeps its hand: a mulligan would shuffle the rigged cards away
                     if (mull) mulligans++;
                     // rigs (-Dmtga.rig) replace the opening hand on purpose
                     if (zone(32).getObjectInstanceIdsCount() != 7 && System.getProperty("mtga.rig") == null) problem("mulligan offered with hand of " + zone(32).getObjectInstanceIdsCount());
@@ -936,6 +951,9 @@ public final class SelfPlay {
                     }
                     ClientToGREMessage.Builder r = msg(ClientMessageType.ClientMessageType_SelectTargetsResp);
                     Target pick = open.get(rnd.nextInt(open.size()));
+                    if (System.getProperty("mtga.rig", "").startsWith("protection")) {
+                        for (Target candidate : open) if (String.valueOf(debugName(candidate.getTargetInstanceId())).startsWith("Grizzly Bears")) { pick = candidate; break; }
+                    }
                     r.getSelectTargetsRespBuilder().getTargetBuilder().setTargetIdx(ts.getTargetIdx()).addTargets(pick);
                     reply(r);
                 }
@@ -1019,12 +1037,27 @@ public final class SelfPlay {
                         }
                     }
                     ClientToGREMessage.Builder r = msg(ClientMessageType.ClientMessageType_OptionalActionResp);
-                    r.getOptionalRespBuilder().setResponse(rnd.nextBoolean() ? OptionResponse.OptionResponse_Allow_Yes : OptionResponse.OptionResponse_Cancel_No);
+                    boolean allow = rnd.nextBoolean();
+                    if ("protection-artifact".equals(System.getProperty("mtga.rig"))
+                            && g.getPrompt().getParametersList().stream().anyMatch(p -> p.getStringValue().contains("Choose protection from Artifact"))) {
+                        protectionAsked = true;
+                        allow = true;
+                    }
+                    r.getOptionalRespBuilder().setResponse(allow ? OptionResponse.OptionResponse_Allow_Yes : OptionResponse.OptionResponse_Cancel_No);
                     reply(r);
                 }
                 case GREMessageType_SelectNReq -> {
                     requests++;
                     SelectNReq sn = g.getSelectNReq();
+                    if ("protection".equals(System.getProperty("mtga.rig")) && sn.getStaticList() == StaticList.StaticList_Colors) {
+                        protectionAsked = true;
+                        int blue = 2; // GRE CardColor Blue; deliberately differs from the AI's usual choice
+                        if (!sn.getIdsList().contains(blue) || sn.getMinSel() != 1 || sn.getMaxSel() != 1) problem("protection color prompt lacks blue / one required choice");
+                        ClientToGREMessage.Builder r = msg(ClientMessageType.ClientMessageType_SelectNResp);
+                        r.getSelectNRespBuilder().addIds(blue);
+                        reply(r);
+                        break;
+                    }
                     if (sn.getStaticList() == com.wizards.mtga.gre.StaticList.StaticList_CardNames) {      // "choose a card name": the answer is a title id
                         if (!g.hasPrompt() || sn.getMinSel() != 1) problem("card name request without prompt / one choice");
                         int tid = sn.getIdsCount() > 0 ? sn.getIds(rnd.nextInt(sn.getIdsCount())) : TITLE_DB.titleId(TITLE_DB.grpId("Lightning Bolt"));
@@ -1492,6 +1525,14 @@ public final class SelfPlay {
             if (oldTurn != null && turn != null) {
                 if (turn.getTurnNumber() != oldTurn.getTurnNumber() && !newTurn) problem("turn changed without NewTurnStarted");
                 if ((turn.getPhase() != oldTurn.getPhase() || turn.getStep() != oldTurn.getStep()) && !phaseAnn && turn.getPhase() != Phase.Phase_None) problem("phase/step changed without PhaseOrStepModified");
+            }
+            String rig = System.getProperty("mtga.rig", "");
+            for (GameObjectInfo o : objs.values()) {
+                String name = String.valueOf(debugName(o.getInstanceId()));
+                if (protectionAsked && name.startsWith("Grizzly Bears")) {
+                    String keyword = rig.equals("protection-artifact") ? "Protection:Artifact" : "Protection from blue";
+                    protectionApplied |= backend.debugHasKeyword(o.getInstanceId(), keyword);
+                }
             }
             if (delugeAsked) for (GameObjectInfo o : objs.values()) {
                 ZoneInfo z = zones.get(o.getZoneId());

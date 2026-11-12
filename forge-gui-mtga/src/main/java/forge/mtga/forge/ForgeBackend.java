@@ -307,6 +307,12 @@ public final class ForgeBackend implements GameBackend {
         return c == null ? "?" + iid : c.getName() + (c.isToken() ? " (token)" : "") + " in " + c.getZone();
     }
 
+    /** Test aid: check the engine result, not just that a choice request was sent. */
+    public boolean debugHasKeyword(int iid, String keyword) {
+        Card c = sync == null ? null : sync.card(iid);
+        return c != null && c.hasKeyword(keyword);
+    }
+
     private int iid(Card c) { return sync.iid(c); }
 
     /** The game on the Forge side is over: report it; {@code matchOver} also ends the match, else the sideboarding that follows is {@link #sideboard}. */
@@ -1022,6 +1028,13 @@ public final class ForgeBackend implements GameBackend {
             for (int i = 0; i < 3; i++) rigAdd(p, "Swamp", ZoneType.Battlefield, 0);
             for (String name : List.of("Bitter Triumph", "Iridescent Vinelasher", "Grizzly Bears", "Grizzly Bears")) rigAdd(p, name, ZoneType.Hand, 0);
             rigAdd(opponent, "Grizzly Bears", ZoneType.Battlefield, 0);
+            return;
+        }
+        if ("protection".equals(rig) || "protection-artifact".equals(rig)) {
+            for (int i = 0; i < 3; i++) rigAdd(p, "Plains", ZoneType.Battlefield, 0);
+            rigAdd(p, "Grizzly Bears", ZoneType.Battlefield, 0);
+            if ("protection".equals(rig)) rigAdd(p, "Mother of Runes", ZoneType.Battlefield, 0);
+            else rigAdd(p, "Apostle's Blessing", ZoneType.Hand, 0);
             return;
         }
         if ("spyglass".equals(rig)) {
@@ -3614,6 +3627,37 @@ public final class ForgeBackend implements GameBackend {
                 if (odd != null) return odd;
             }
             return super.chooseBinary(sa, question, kindOfChoice, defaultChoice);
+        }
+
+        @Override
+        public String chooseProtectionType(SpellAbility sa, List<String> choices) {
+            if (!live()) return super.chooseProtectionType(sa, choices);
+            if (choices.isEmpty()) return null;
+            if (choices.size() == 1) return choices.get(0);
+            Card host = sa == null ? null : sa.getHostCard();
+            Map<Byte, String> colors = new LinkedHashMap<>();
+            List<String> types = new ArrayList<>();
+            int mask = 0;
+            for (String choice : choices) {
+                byte color = forge.card.MagicColor.fromName(choice);
+                if (color != 0 && Integer.bitCount(color) == 1) {
+                    colors.put(color, choice);
+                    mask |= color;
+                } else types.add(choice);
+            }
+            // Protection can also name a card type. Do not present Artifact as Colorless.
+            for (int i = 0; i < types.size(); i++) {
+                String type = types.get(i);
+                if (colors.isEmpty() && i == types.size() - 1) return type;
+                String question = "Choose protection from " + type + "?";
+                if (askOptional(host, PROMPT_FORGE_TEXT, List.of(textParam("Text", question)), question)) return type;
+            }
+            if (colors.size() == 1) return colors.values().iterator().next();
+            // This is a required resolution choice; cancellation must not hand the decision to the AI.
+            while (true) {
+                List<Byte> selected = askColors(host, forge.card.ColorSet.fromMask(mask), false, 1, 1);
+                if (selected.size() == 1 && colors.containsKey(selected.get(0))) return colors.get(selected.get(0));
+            }
         }
 
         @Override

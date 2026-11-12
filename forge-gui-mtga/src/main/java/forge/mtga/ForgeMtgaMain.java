@@ -218,6 +218,10 @@ public final class ForgeMtgaMain {
             red.clear();
             red.put("Mountain", 40);
         }
+        if ("protection".equals(rig) || "protection-artifact".equals(rig)) {
+            green.clear(); green.put("Plains", 40);
+            red.clear(); red.put("Wastes", 40);
+        }
         if ("deluge".equals(rig) || "spyglass".equals(rig)) {
             green.clear(); green.put("Swamp", 40);
             red.clear(); red.put("Plains", 40);
