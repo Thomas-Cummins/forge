@@ -118,6 +118,18 @@ public final class QueueCheck {
         check(formats.problem("Brawl", brawl.cards(), java.util.List.of(), 0) != null, "Brawl refuses a deck without a commander");
         check(formats.problem("Standard", deck("Mountain", 60), brawl.commanders(), 0) != null, "Standard refuses a commander");
 
+        // Cube uses the saved Draft format, not an event-only draft type or a constructed ban list.
+        String cube = ChallengeService.FORMAT_OF.get("DirectGameTournamentAlchemy");
+        check(ForgeFormats.DRAFT_DECK.equals(cube), "cube challenge validates against Draft");
+        var cubePicker = formats.response().getFormatsList().stream().filter(f -> "DirectGameCube".equals(f.getName())).findFirst().orElseThrow();
+        check(cubePicker.getMainDeckQuota().getMin() == 40 && cubePicker.getFormatTypeInternal() == 3,
+                "cube deck picker offers 40-card decks outside a draft event");
+        check(!ForgeFormats.isDraftType("DirectGameCube"), "cube decks do not need a draft event");
+        check(formats.problem(cube, deck("Sol Ring", 1, "Mountain", 39), 0) == null, "cube accepts 40 cards including a Commander staple");
+        check(formats.problem(cube, deck("Sol Ring", 1, "Mountain", 38), 0) != null, "cube refuses 39 cards");
+        check(formats.problem(cube, deck("Mountain", 40), java.util.List.of("Atraxa, Praetors' Voice"), 0) != null,
+                "cube has no command zone");
+
         Map<String, Integer> bolt = deck("Lightning Bolt", 4, "Mountain", 56);
         check(formats.problem("Modern", bolt, 0) == null, "Modern accepts Bolt + Mountain");
         check(formats.problem("Pioneer", bolt, 0) != null, "Pioneer refuses Lightning Bolt: " + formats.problem("Pioneer", bolt, 0));

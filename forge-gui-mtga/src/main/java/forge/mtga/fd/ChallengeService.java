@@ -39,8 +39,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>Format: the challenge screen has fixed slots; ours are re-skinned: DirectGame = Standard, DirectGameBrawl = Pioneer,
  * DirectGameTournamentExplorer = Brawl, DirectGameTournamentTimeless = Historic, DirectGameAlchemy = Modern, DirectGameLimited = Legacy, DirectGameTournamentMode = Vintage, DirectGameTournamentLimited = Pauper, DirectGameTournamentHistoric = Premodern (the bridge's
- * ChallengeSlots rebuilds the client's spinners to match; ForgeFormats.DIRECT_SLOTS). Best of 3 and "who plays first"
- * are not supported yet (one game, the engine decides).
+ * ChallengeSlots rebuilds the client's spinners to match; ForgeFormats.DIRECT_SLOTS). The unused DirectGameTournamentAlchemy
+ * slot offers Cube / 40-card using the saved Draft format. Best of three and who plays first follow the challenge settings.
  */
 final class ChallengeService {
     static final List<String> COMMANDS = List.of("ChallengeCreate", "ChallengeJoin", "ChallengeExit", "ChallengeClose", "ChallengeKick", "ChallengeReady",
@@ -50,7 +50,8 @@ final class ChallengeService {
     /** Challenge slot (client match type) -> format whose rules the decks are checked against. */
     static final Map<String, String> FORMAT_OF = Map.of("DirectGame", "Standard", "DirectGameBrawl", "Pioneer", "DirectGameAlchemy", "Modern",
             "DirectGameLimited", "Legacy", "DirectGameTournamentMode", "Vintage", "DirectGameTournamentLimited", "Pauper",
-            "DirectGameTournamentHistoric", "Premodern", "DirectGameTournamentExplorer", "Brawl", "DirectGameTournamentTimeless", "Historic");
+            "DirectGameTournamentHistoric", "Premodern", "DirectGameTournamentExplorer", "Brawl", "DirectGameTournamentTimeless", "Historic",
+            "DirectGameTournamentAlchemy", ForgeFormats.DRAFT_DECK);
 
     /** The event id every challenge match is created with (the client treats it as its private game). */
     static final String EVENT = "DirectGame";
