@@ -1024,6 +1024,12 @@ public final class ForgeBackend implements GameBackend {
             rigAdd(opponent, "Grizzly Bears", ZoneType.Battlefield, 0);
             return;
         }
+        if ("deluge".equals(rig)) {
+            for (int i = 0; i < 3; i++) rigAdd(p, "Swamp", ZoneType.Battlefield, 0);
+            rigAdd(p, "Toxic Deluge", ZoneType.Hand, 0);
+            rigAdd(opponent, "Grizzly Bears", ZoneType.Battlefield, 0);
+            return;
+        }
         if ("gollum".equals(rig)) {      // Swamp x3 in play, Gollum, Riddle Master in hand: casting it must ask odd or even (client parity buttons)
             for (int i = 0; i < 3; i++) rigAdd(p, "Swamp", ZoneType.Battlefield, 0);
             rigAdd(p, "Gollum, Riddle Master", ZoneType.Hand, 0);
@@ -3387,9 +3393,17 @@ public final class ForgeBackend implements GameBackend {
             Card castHost = sa.getHostCard();
             ZoneType castFrom = sa.isSpell() && castHost.getZone() != null ? castHost.getZone().getZoneType() : null;
             boolean played = forge.ai.ComputerUtil.handlePlayingSpellAbility(player, sa, root -> {
-                if (root.costHasManaX() && root.getXManaCostPaid() == null) {
-                    int max = Math.max(0, forge.ai.ComputerUtilMana.determineLeftoverMana(root, player, false));
-                    root.setXManaCostPaid(askNumber(root.getHostCard(), 0, max));
+                if (root.getXManaCostPaid() == null) {
+                    if (root.costHasManaX()) {
+                        int max = Math.max(0, forge.ai.ComputerUtilMana.determineLeftoverMana(root, player, false));
+                        root.setXManaCostPaid(askNumber(root.getHostCard(), 0, max));
+                    } else if (root.getPayCosts() != null && root.getPayCosts().hasXInAnyCostPart()
+                            && (root.getSVar("X").isEmpty() || "Count$xPaid".equals(root.getSVar("X")))) {
+                        // Toxic Deluge has X in PayLife, not in its mana cost. Forge's AI
+                        // cast path does not announce it; choose before paying any costs.
+                        Integer max = root.getPayCosts().getMaxForNonManaX(root, player, false);
+                        if (max != null) root.setXManaCostPaid(askNumber(root.getHostCard(), 0, Math.max(0, max)));
+                    }
                 }
                 for (SpellAbility cur = root; cur != null; cur = cur.getSubAbility()) {
                     if (cur.usesTargeting()) {

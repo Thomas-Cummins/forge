@@ -160,6 +160,11 @@ public final class SelfPlay {
                 System.out.println("  mill rig: largest move " + fc.massMoves + " cards, " + fc.maxMillAnimated + " Mill animations" + (ok ? "" : "  (WRONG)"));
                 if (!ok) failed++;
             }
+            if ("deluge".equals(System.getProperty("mtga.rig"))) {
+                boolean ok = fc.delugeAsked && fc.delugePaid && fc.delugeKilled;
+                System.out.println("  deluge rig: X choice asked " + fc.delugeAsked + ", 3 life paid " + fc.delugePaid + ", creature killed " + fc.delugeKilled + (ok ? "" : " (WRONG)"));
+                if (!ok) failed++;
+            }
             if ("addcost".equals(System.getProperty("mtga.rig"))) {      // the player is asked about offspring and about Bitter Triumph's additional cost
                 boolean ok = fc.costChoiceAsked && fc.offspringAsked;
                 System.out.println("  addcost rig: additional cost choice asked " + fc.costChoiceAsked + ", offspring asked " + fc.offspringAsked + (ok ? "" : "  (WRONG)"));
@@ -690,6 +695,7 @@ public final class SelfPlay {
             return b.toString();
         }
 
+        boolean delugeAsked, delugePaid, delugeKilled;
         boolean samiOffered, roomBothOffered, roomUnlockOffered, costChoiceAsked, offspringAsked;
         int massMoves, maxMillAnimated;
 
@@ -742,6 +748,9 @@ public final class SelfPlay {
                 for (String n : List.of("Traumatize", "Doomsday")) {
                     for (Action a : acts) if (a.getActionType() == ActionType.ActionType_Cast && String.valueOf(debugName(a.getInstanceId())).startsWith(n)) return a;
                 }
+            }
+            if ("deluge".equals(System.getProperty("mtga.rig"))) {
+                for (Action a : acts) if (a.getActionType() == ActionType.ActionType_Cast && String.valueOf(debugName(a.getInstanceId())).startsWith("Toxic Deluge")) return a;
             }
             long want = Long.getLong("selfplay.prefer", 0);
             if (want == 0) return null;
@@ -824,7 +833,7 @@ public final class SelfPlay {
                 }
                 case GREMessageType_MulliganReq -> {
                     requests++;
-                    boolean mull = mulligans < 2 && rnd.nextInt(3) == 0 && !"sami".equals(System.getProperty("mtga.rig")) && !"mill".equals(System.getProperty("mtga.rig")) && !"room".equals(System.getProperty("mtga.rig")) && !"arrow".equals(System.getProperty("mtga.rig")) && !"phasing".equals(System.getProperty("mtga.rig")) && !"addcost".equals(System.getProperty("mtga.rig"));      // a rig keeps its hand: a mulligan would shuffle the rigged cards away
+                    boolean mull = mulligans < 2 && rnd.nextInt(3) == 0 && !"sami".equals(System.getProperty("mtga.rig")) && !"mill".equals(System.getProperty("mtga.rig")) && !"room".equals(System.getProperty("mtga.rig")) && !"arrow".equals(System.getProperty("mtga.rig")) && !"phasing".equals(System.getProperty("mtga.rig")) && !"addcost".equals(System.getProperty("mtga.rig")) && !"deluge".equals(System.getProperty("mtga.rig"));      // a rig keeps its hand: a mulligan would shuffle the rigged cards away
                     if (mull) mulligans++;
                     // rigs (-Dmtga.rig) replace the opening hand on purpose
                     if (zone(32).getObjectInstanceIdsCount() != 7 && System.getProperty("mtga.rig") == null) problem("mulligan offered with hand of " + zone(32).getObjectInstanceIdsCount());
@@ -1064,7 +1073,11 @@ public final class SelfPlay {
                     requests++;
                     NumericInputReq ni = g.getNumericInputReq();
                     ClientToGREMessage.Builder r = msg(ClientMessageType.ClientMessageType_NumericInputResp);
-                    r.getNumericInputRespBuilder().setNumericInputValue(ni.getMinValue() + rnd.nextInt((int) (ni.getMaxValue() - ni.getMinValue()) + 1));
+                    if ("deluge".equals(System.getProperty("mtga.rig")) && String.valueOf(debugName(ni.getSourceId())).startsWith("Toxic Deluge")) {
+                        delugeAsked = true;
+                        if (ni.getMinValue() != 0 || ni.getMaxValue() != 20) problem("Deluge X bounds should be 0..20");
+                        r.getNumericInputRespBuilder().setNumericInputValue(3);
+                    } else r.getNumericInputRespBuilder().setNumericInputValue(ni.getMinValue() + rnd.nextInt((int) (ni.getMaxValue() - ni.getMinValue()) + 1));
                     reply(r);
                 }
                 case GREMessageType_OrderReq -> {
@@ -1460,7 +1473,12 @@ public final class SelfPlay {
                 if (turn.getTurnNumber() != oldTurn.getTurnNumber() && !newTurn) problem("turn changed without NewTurnStarted");
                 if ((turn.getPhase() != oldTurn.getPhase() || turn.getStep() != oldTurn.getStep()) && !phaseAnn && turn.getPhase() != Phase.Phase_None) problem("phase/step changed without PhaseOrStepModified");
             }
+            if (delugeAsked) for (GameObjectInfo o : objs.values()) {
+                ZoneInfo z = zones.get(o.getZoneId());
+                if (z != null && z.getType() == ZoneType.ZoneType_Graveyard && String.valueOf(debugName(o.getInstanceId())).startsWith("Grizzly Bears")) delugeKilled = true;
+            }
             for (PlayerInfo p : players.values()) {
+                if (delugeAsked && p.getSystemSeatNumber() == 1 && p.getLifeTotal() == 17) delugePaid = true;
                 PlayerInfo o = oldPlayers.get(p.getSystemSeatNumber());
                 if (o != null && o.getLifeTotal() != p.getLifeTotal()
                         && lifeAnn.getOrDefault(p.getSystemSeatNumber(), 0) != p.getLifeTotal() - o.getLifeTotal()) problem("life changed without matching ModifiedLife");
