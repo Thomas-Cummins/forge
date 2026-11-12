@@ -1024,6 +1024,12 @@ public final class ForgeBackend implements GameBackend {
             rigAdd(opponent, "Grizzly Bears", ZoneType.Battlefield, 0);
             return;
         }
+        if ("spyglass".equals(rig)) {
+            for (int i = 0; i < 3; i++) rigAdd(p, "Swamp", ZoneType.Battlefield, 0);
+            rigAdd(p, "Sorcerous Spyglass", ZoneType.Hand, 0);
+            rigAdd(p, "Liliana of the Veil", ZoneType.Battlefield, 5);
+            return;
+        }
         if ("deluge".equals(rig)) {
             for (int i = 0; i < 3; i++) rigAdd(p, "Swamp", ZoneType.Battlefield, 0);
             rigAdd(p, "Toxic Deluge", ZoneType.Hand, 0);
@@ -1937,7 +1943,9 @@ public final class ForgeBackend implements GameBackend {
         }
         for (Card c : candidates) {
             for (SpellAbility sa : c.getAllPossibleAbilities(me, true)) {
-                if (!sa.isManaAbility()) playable.add(sa);
+                // canPlay checks timing/costs; static prohibitions (Spyglass, Needle,
+                // Meddling Mage, ...) are a separate Forge check.
+                if (!sa.isManaAbility() && sa.checkRestrictions(me)) playable.add(sa);
             }
         }
         offered.clear();
@@ -3361,6 +3369,7 @@ public final class ForgeBackend implements GameBackend {
         }
 
         private boolean castChosen(SpellAbility sa) {
+            if (live() && !sa.checkRestrictions(player)) return false; // recheck stale client actions before paying costs
             if (sa.isSpell() && live()) {
                 sa = askAlternativeAdditionalCost(sa);      // "discard a card or pay 3 life": the player picks first
                 if (sa == null) return false;

@@ -160,6 +160,11 @@ public final class SelfPlay {
                 System.out.println("  mill rig: largest move " + fc.massMoves + " cards, " + fc.maxMillAnimated + " Mill animations" + (ok ? "" : "  (WRONG)"));
                 if (!ok) failed++;
             }
+            if ("spyglass".equals(System.getProperty("mtga.rig"))) {
+                boolean ok = fc.spyglassNamed && fc.spyglassBefore && fc.spyglassAfter && fc.spyglassMana;
+                System.out.println("  spyglass rig: name chosen " + fc.spyglassNamed + ", Liliana initially offered " + fc.spyglassBefore + ", blocked after naming " + fc.spyglassAfter + ", mana available " + fc.spyglassMana + (ok ? "" : " (WRONG)"));
+                if (!ok) failed++;
+            }
             if ("deluge".equals(System.getProperty("mtga.rig"))) {
                 boolean ok = fc.delugeAsked && fc.delugePaid && fc.delugeKilled;
                 System.out.println("  deluge rig: X choice asked " + fc.delugeAsked + ", 3 life paid " + fc.delugePaid + ", creature killed " + fc.delugeKilled + (ok ? "" : " (WRONG)"));
@@ -695,6 +700,7 @@ public final class SelfPlay {
             return b.toString();
         }
 
+        boolean spyglassNamed, spyglassBefore, spyglassAfter, spyglassMana;
         boolean delugeAsked, delugePaid, delugeKilled;
         boolean samiOffered, roomBothOffered, roomUnlockOffered, costChoiceAsked, offspringAsked;
         int massMoves, maxMillAnimated;
@@ -751,6 +757,16 @@ public final class SelfPlay {
             }
             if ("deluge".equals(System.getProperty("mtga.rig"))) {
                 for (Action a : acts) if (a.getActionType() == ActionType.ActionType_Cast && String.valueOf(debugName(a.getInstanceId())).startsWith("Toxic Deluge")) return a;
+            }
+            if ("spyglass".equals(System.getProperty("mtga.rig"))) {
+                boolean liliana = acts.stream().anyMatch(a -> a.getActionType() == ActionType.ActionType_Activate && String.valueOf(debugName(a.getInstanceId())).startsWith("Liliana of the Veil"));
+                if (!spyglassNamed) spyglassBefore |= liliana;
+                else {
+                    spyglassAfter = true;
+                    if (liliana) problem("Spyglass named Liliana but a loyalty activation was offered");
+                    spyglassMana |= acts.stream().anyMatch(a -> a.getActionType() == ActionType.ActionType_Activate_Mana);
+                }
+                for (Action a : acts) if (a.getActionType() == ActionType.ActionType_Cast && String.valueOf(debugName(a.getInstanceId())).startsWith("Sorcerous Spyglass")) return a;
             }
             long want = Long.getLong("selfplay.prefer", 0);
             if (want == 0) return null;
@@ -833,7 +849,7 @@ public final class SelfPlay {
                 }
                 case GREMessageType_MulliganReq -> {
                     requests++;
-                    boolean mull = mulligans < 2 && rnd.nextInt(3) == 0 && !"sami".equals(System.getProperty("mtga.rig")) && !"mill".equals(System.getProperty("mtga.rig")) && !"room".equals(System.getProperty("mtga.rig")) && !"arrow".equals(System.getProperty("mtga.rig")) && !"phasing".equals(System.getProperty("mtga.rig")) && !"addcost".equals(System.getProperty("mtga.rig")) && !"deluge".equals(System.getProperty("mtga.rig"));      // a rig keeps its hand: a mulligan would shuffle the rigged cards away
+                    boolean mull = mulligans < 2 && rnd.nextInt(3) == 0 && !"sami".equals(System.getProperty("mtga.rig")) && !"mill".equals(System.getProperty("mtga.rig")) && !"room".equals(System.getProperty("mtga.rig")) && !"arrow".equals(System.getProperty("mtga.rig")) && !"phasing".equals(System.getProperty("mtga.rig")) && !"addcost".equals(System.getProperty("mtga.rig")) && !"deluge".equals(System.getProperty("mtga.rig")) && !"spyglass".equals(System.getProperty("mtga.rig"));      // a rig keeps its hand: a mulligan would shuffle the rigged cards away
                     if (mull) mulligans++;
                     // rigs (-Dmtga.rig) replace the opening hand on purpose
                     if (zone(32).getObjectInstanceIdsCount() != 7 && System.getProperty("mtga.rig") == null) problem("mulligan offered with hand of " + zone(32).getObjectInstanceIdsCount());
@@ -1012,6 +1028,10 @@ public final class SelfPlay {
                     if (sn.getStaticList() == com.wizards.mtga.gre.StaticList.StaticList_CardNames) {      // "choose a card name": the answer is a title id
                         if (!g.hasPrompt() || sn.getMinSel() != 1) problem("card name request without prompt / one choice");
                         int tid = sn.getIdsCount() > 0 ? sn.getIds(rnd.nextInt(sn.getIdsCount())) : TITLE_DB.titleId(TITLE_DB.grpId("Lightning Bolt"));
+                        if ("spyglass".equals(System.getProperty("mtga.rig"))) {
+                            tid = TITLE_DB.titleId(TITLE_DB.grpId("Liliana of the Veil"));
+                            spyglassNamed = true;
+                        }
                         CARD_NAMES.incrementAndGet();
                         ClientToGREMessage.Builder r = msg(ClientMessageType.ClientMessageType_SelectNResp);
                         r.getSelectNRespBuilder().addIds(tid);

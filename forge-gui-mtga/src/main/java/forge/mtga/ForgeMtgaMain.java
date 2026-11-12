@@ -218,7 +218,7 @@ public final class ForgeMtgaMain {
             red.clear();
             red.put("Mountain", 40);
         }
-        if ("deluge".equals(rig)) {
+        if ("deluge".equals(rig) || "spyglass".equals(rig)) {
             green.clear(); green.put("Swamp", 40);
             red.clear(); red.put("Plains", 40);
         }
