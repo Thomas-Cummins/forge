@@ -161,6 +161,12 @@ public final class SelfPlay {
                 if (!ok) failed++;
             }
             String choiceRig = System.getProperty("mtga.rig", "");
+            if (choiceRig.startsWith("delve")) {
+                boolean ok = fc.delveAttempted && fc.delveAsked && fc.delveVerified;
+                System.out.println("  " + choiceRig + " rig: cast selected " + fc.delveAttempted + ", payment asked " + fc.delveAsked
+                        + ", selected cards / remaining mana / rollback verified " + fc.delveVerified + (ok ? "" : " (WRONG)"));
+                if (!ok) failed++;
+            }
             if (choiceRig.startsWith("protection")) {
                 boolean ok = fc.protectionAsked && fc.protectionApplied;
                 System.out.println("  protection rig: choice asked " + fc.protectionAsked + ", chosen protection applied " + fc.protectionApplied + (ok ? "" : " (WRONG)"));
@@ -716,6 +722,7 @@ public final class SelfPlay {
             return b.toString();
         }
 
+        boolean delveAttempted, delveAsked, delveVerified;
         boolean protectionAsked, protectionApplied;
         boolean fellwarChecked, fellwarOffered, fellwarOptions, fellwarTapped, fellwarPaid, fellwarPreview;
         boolean spyglassNamed, spyglassBefore, spyglassAfter, spyglassMana;
@@ -761,6 +768,9 @@ public final class SelfPlay {
 
         private Action preferred(List<Action> acts) {
             String rig = System.getProperty("mtga.rig", "");
+            if (rig.startsWith("delve") && !delveAttempted) {
+                for (Action a : acts) if (a.getActionType() == ActionType.ActionType_Cast && String.valueOf(debugName(a.getInstanceId())).startsWith("Treasure Cruise")) return a;
+            }
             if (rig.startsWith("protection")) {
                 for (Action a : acts) {
                     String name = String.valueOf(debugName(a.getInstanceId()));
@@ -896,7 +906,7 @@ public final class SelfPlay {
                 }
                 case GREMessageType_MulliganReq -> {
                     requests++;
-                    boolean mull = mulligans < 2 && rnd.nextInt(3) == 0 && !"sami".equals(System.getProperty("mtga.rig")) && !"mill".equals(System.getProperty("mtga.rig")) && !"room".equals(System.getProperty("mtga.rig")) && !"arrow".equals(System.getProperty("mtga.rig")) && !"phasing".equals(System.getProperty("mtga.rig")) && !"addcost".equals(System.getProperty("mtga.rig")) && !"deluge".equals(System.getProperty("mtga.rig")) && !"spyglass".equals(System.getProperty("mtga.rig")) && !System.getProperty("mtga.rig", "").startsWith("protection") && !System.getProperty("mtga.rig", "").startsWith("fellwar");      // a rig keeps its hand: a mulligan would shuffle the rigged cards away
+                    boolean mull = mulligans < 2 && rnd.nextInt(3) == 0 && !"sami".equals(System.getProperty("mtga.rig")) && !"mill".equals(System.getProperty("mtga.rig")) && !"room".equals(System.getProperty("mtga.rig")) && !"arrow".equals(System.getProperty("mtga.rig")) && !"phasing".equals(System.getProperty("mtga.rig")) && !"addcost".equals(System.getProperty("mtga.rig")) && !"deluge".equals(System.getProperty("mtga.rig")) && !"spyglass".equals(System.getProperty("mtga.rig")) && !System.getProperty("mtga.rig", "").startsWith("protection") && !System.getProperty("mtga.rig", "").startsWith("fellwar") && !System.getProperty("mtga.rig", "").startsWith("delve");      // a rig keeps its hand: a mulligan would shuffle the rigged cards away
                     if (mull) mulligans++;
                     // rigs (-Dmtga.rig) replace the opening hand on purpose
                     if (zone(32).getObjectInstanceIdsCount() != 7 && System.getProperty("mtga.rig") == null) problem("mulligan offered with hand of " + zone(32).getObjectInstanceIdsCount());
@@ -949,6 +959,13 @@ public final class SelfPlay {
                             reply(rr);
                             break;
                         }
+                    }
+                    if (System.getProperty("mtga.rig", "").startsWith("delve")) {
+                        // Do not flash back the graveyard fixture or tap mana before selecting the spell.
+                        acts.removeIf(a -> !delveVerified && !(a.getActionType() == ActionType.ActionType_Cast && !delveAttempted
+                                && String.valueOf(debugName(a.getInstanceId())).startsWith("Treasure Cruise")));
+                        if (delveAttempted) acts.removeIf(a -> a.getActionType() == ActionType.ActionType_Cast
+                                && String.valueOf(debugName(a.getInstanceId())).startsWith("Treasure Cruise"));
                     }
                     acts.removeIf(a -> a.getActionType() == ActionType.ActionType_Pass);
                     ClientToGREMessage.Builder r = msg(ClientMessageType.ClientMessageType_PerformActionResp);
@@ -1181,6 +1198,29 @@ public final class SelfPlay {
                         for (int id : sel.getIdsList()) {
                             GameObjectInfo o = objs.get(id);
                             if (o == null || o.getVisibility() == Visibility.Visibility_Hidden) problem("cost selection option not visible");
+                        }
+                        if (System.getProperty("mtga.rig", "").startsWith("delve") && String.valueOf(debugName(sel.getSourceId())).startsWith("Treasure Cruise")) {
+                            if (!delveAttempted) problem("delve requested during prediction before the player selected a cast");
+                            if (delveAsked) problem("delve requested more than once for one cast");
+                            delveAsked = true;
+                            if (sel.getMinSel() != 0 || sel.getMaxSel() != 6 || sel.getIdsCount() != 6) problem("delve must offer zero through six graveyard cards");
+                            if ("delve-cancel".equals(System.getProperty("mtga.rig"))) {
+                                reply(msg(ClientMessageType.ClientMessageType_CancelActionReq));
+                                break;
+                            }
+                            List<Integer> selected = new ArrayList<>();
+                            if (!"delve-zero".equals(System.getProperty("mtga.rig"))) {
+                                for (int id : sel.getIdsList()) {
+                                    String name = String.valueOf(debugName(id));
+                                    if (name.startsWith("Grizzly Bears") || name.startsWith("Hill Giant")) selected.add(id);
+                                }
+                                if (selected.size() != 2) problem("delve fixture must offer both creature cards");
+                            }
+                            ClientToGREMessage.Builder r = msg(ClientMessageType.ClientMessageType_EffectCostResp);
+                            r.getEffectCostRespBuilder().setEffectCostType(EffectCostType.EffectCostType_Select)
+                                    .getCostSelectionBuilder().addAllIds(selected);
+                            reply(r);
+                            break;
                         }
                         List<Integer> ids = new ArrayList<>(sel.getIdsList());
                         java.util.Collections.shuffle(ids, rnd);
@@ -1559,6 +1599,33 @@ public final class SelfPlay {
                 if ((turn.getPhase() != oldTurn.getPhase() || turn.getStep() != oldTurn.getStep()) && !phaseAnn && turn.getPhase() != Phase.Phase_None) problem("phase/step changed without PhaseOrStepModified");
             }
             String rig = System.getProperty("mtga.rig", "");
+            if (rig.startsWith("delve") && delveAsked && !delveVerified) {
+                Set<String> grave = new HashSet<>(), exiled = new HashSet<>();
+                int tappedIslands = 0;
+                boolean cruiseInHand = false, cruiseCommitted = false;
+                for (GameObjectInfo o : objs.values()) {
+                    String name = String.valueOf(debugName(o.getInstanceId()));
+                    for (String fixture : List.of("Think Twice", "Grizzly Bears", "Hill Giant", "Lightning Bolt", "Opt", "Ponder")) {
+                        if (name.startsWith(fixture)) {
+                            if (o.getZoneId() == 33) grave.add(fixture);
+                            if (o.getZoneId() == 29) exiled.add(fixture);
+                        }
+                    }
+                    if (name.startsWith("Island") && o.getZoneId() == 28 && o.getIsTapped()) tappedIslands++;
+                    if (name.startsWith("Treasure Cruise")) {
+                        cruiseInHand |= o.getZoneId() == 32;
+                        cruiseCommitted |= o.getZoneId() == 27 || o.getZoneId() == 33;
+                    }
+                }
+                if (rig.equals("delve-cancel") || rig.equals("delve-unpayable")) {
+                    delveVerified = cruiseInHand && grave.size() == 6 && exiled.isEmpty() && tappedIslands == 0;
+                } else if (rig.equals("delve-zero")) {
+                    delveVerified = cruiseCommitted && grave.size() == 6 && exiled.isEmpty() && tappedIslands == 8;
+                } else {
+                    delveVerified = cruiseCommitted && exiled.equals(Set.of("Grizzly Bears", "Hill Giant"))
+                            && grave.equals(Set.of("Think Twice", "Lightning Bolt", "Opt", "Ponder")) && tappedIslands == 6;
+                }
+            }
             for (GameObjectInfo o : objs.values()) {
                 String name = String.valueOf(debugName(o.getInstanceId()));
                 if (protectionAsked && name.startsWith("Grizzly Bears")) {
@@ -1611,6 +1678,8 @@ public final class SelfPlay {
 
         /** Like the client's color wheel: a mana action with several ManaPaymentOptions comes back with the chosen one only. */
         private Action withChosenColor(Action a) {
+            if (System.getProperty("mtga.rig", "").startsWith("delve") && a.getActionType() == ActionType.ActionType_Cast
+                    && String.valueOf(debugName(a.getInstanceId())).startsWith("Treasure Cruise")) delveAttempted = true;
             if (a.getManaPaymentOptionsCount() < 2) return a;
             for (ManaPaymentOption o : a.getManaPaymentOptionsList()) {
                 for (ManaInfo m : o.getManaList()) {

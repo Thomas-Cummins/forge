@@ -263,6 +263,12 @@ public abstract class PlayerController {
     public abstract CardCollectionView chooseCardsToDiscardToMaximumHandSize(int numDiscard);
 
     public abstract CardCollectionView chooseCardsToDelve(int genericAmount, CardCollection grave);
+
+    /** Context lets interactive controllers distinguish payment from affordability predictions. */
+    public CardCollectionView chooseCardsToDelve(int genericAmount, CardCollection grave, SpellAbility ability, boolean test) {
+        return chooseCardsToDelve(genericAmount, grave);
+    }
+
     public abstract Map<Card, ManaCostShard> chooseCardsForConvokeOrImprovise(SpellAbility sa, ManaCost manaCost, CardCollectionView untappedCards, boolean artifacts, boolean creatures, Integer maxReduction);
     public abstract List<Card> chooseCardsForSplice(SpellAbility sa, List<Card> cards);
 

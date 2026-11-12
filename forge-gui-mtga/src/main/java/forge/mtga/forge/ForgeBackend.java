@@ -552,6 +552,11 @@ public final class ForgeBackend implements GameBackend {
 
     private record UndoPoint(forge.game.undo.GameMemento memento, long random, int libraries, List<Card> tokens) {}
 
+    /** Delve cancellation is different from choosing to exile zero cards. */
+    private static final class CancelDelve extends RuntimeException {
+        CancelDelve() { super(null, null, false, false); }
+    }
+
     /** Thrown out of a cast's prompt when the client asks to undo it; MtgaController.playChosenSpellAbility restores the game. */
     private static final class UndoCast extends RuntimeException {
         UndoCast() { super(null, null, false, false); }
@@ -1030,6 +1035,16 @@ public final class ForgeBackend implements GameBackend {
             rigAdd(opponent, "Grizzly Bears", ZoneType.Battlefield, 0);
             return;
         }
+        if (rig != null && rig.startsWith("delve")) {
+            int islands = "delve-unpayable".equals(rig) ? 2 : 8;
+            for (int i = 0; i < islands; i++) rigAdd(p, "Island", ZoneType.Battlefield, 0);
+            rigAdd(p, "Treasure Cruise", ZoneType.Hand, 0);
+            rigAdd(p, "Savannah Lions", ZoneType.Battlefield, 0);
+            for (String name : List.of("Think Twice", "Grizzly Bears", "Hill Giant", "Lightning Bolt", "Opt", "Ponder")) {
+                rigAdd(p, name, ZoneType.Graveyard, 0);
+            }
+            return;
+        }
         if ("protection".equals(rig) || "protection-artifact".equals(rig)) {
             for (int i = 0; i < 3; i++) rigAdd(p, "Plains", ZoneType.Battlefield, 0);
             rigAdd(p, "Grizzly Bears", ZoneType.Battlefield, 0);
@@ -1356,6 +1371,11 @@ public final class ForgeBackend implements GameBackend {
      * total reaches minWeight (SelectNReq weights, parallel to ids; a weighted request opens the sum-aware workflow).
      */
     CardCollection askCostSelection(List<Card> options, int min, int max, int promptId, Card source, List<Integer> weights, int minWeight) {
+        return askCostSelection(options, min, max, promptId, source, weights, minWeight, false);
+    }
+
+    private CardCollection askCostSelection(List<Card> options, int min, int max, int promptId, Card source,
+                                             List<Integer> weights, int minWeight, boolean cancelAsNull) {
         int amount = max;
         Map<Integer, Card> byId = new HashMap<>();
         GREToClientMessage.Builder req = req(GREMessageType.GREMessageType_PayCostsReq);
@@ -1380,6 +1400,7 @@ public final class ForgeBackend implements GameBackend {
         ClientToGREMessage r = await(m -> is(m, ClientMessageType.ClientMessageType_EffectCostResp, ClientMessageType.ClientMessageType_SelectNResp,
                 ClientMessageType.ClientMessageType_CancelActionReq));
         System.out.println("[mtga] client cost selection " + r.toString().replace('\n', ' '));
+        if (cancelAsNull && r.getType() == ClientMessageType.ClientMessageType_CancelActionReq) return null;
         List<Integer> ids = r.getType() == ClientMessageType.ClientMessageType_EffectCostResp ? r.getEffectCostResp().getCostSelection().getIdsList()
                 : r.getType() == ClientMessageType.ClientMessageType_SelectNResp ? r.getSelectNResp().getIdsList() : List.of();
         CardCollection chosen = new CardCollection();
@@ -1387,6 +1408,8 @@ public final class ForgeBackend implements GameBackend {
             Card c = byId.get(id);
             if (c != null && !chosen.contains(c)) chosen.add(c);
         }
+        // Delve permits selecting zero cards; keep cancellation distinct and reject malformed selections.
+        if (cancelAsNull && (chosen.size() != ids.size() || chosen.size() < min || chosen.size() > max)) return null;
         return chosen;
     }
 
@@ -3272,6 +3295,17 @@ public final class ForgeBackend implements GameBackend {
         private byte forcedColor;
 
         @Override
+        public CardCollectionView chooseCardsToDelve(int genericAmount, CardCollection grave, SpellAbility ability, boolean test) {
+            if (!live() || test) return super.chooseCardsToDelve(genericAmount, grave, ability, test);
+            int max = Math.min(genericAmount, grave.size());
+            if (max <= 0) return new CardCollection();
+            CardCollection chosen = askCostSelection(new ArrayList<>(grave), 0, max, PROMPT_CHOOSE_CARD,
+                    ability.getHostCard(), null, 0, true);
+            if (chosen == null) throw new CancelDelve();
+            return chosen;
+        }
+
+        @Override
         public forge.game.cost.CostDecisionMakerBase getCostDecisionMaker(Player p, SpellAbility ability, boolean effect, String prompt) {
             return live() && p == human ? new MtgaCostDecision(p, ability, effect) : super.getCostDecisionMaker(p, ability, effect, prompt);
         }
@@ -3332,8 +3366,17 @@ public final class ForgeBackend implements GameBackend {
         @Override
         public boolean payManaCost(forge.card.mana.ManaCost toPay, forge.game.cost.CostPartMana costPartMana, SpellAbility sa,
                                    String prompt, forge.game.mana.ManaConversionMatrix matrix, boolean effect) {
-            if (!settings.manualMana()) return super.payManaCost(toPay, costPartMana, sa, prompt, matrix, effect);
-            return forge.game.player.PlaySpellAbility.payManaCost(this, toPay, costPartMana, sa, player, prompt, matrix, effect);
+            boolean delve = !effect && sa.isSpell() && sa.getHostCard().hasKeyword(forge.game.keyword.Keyword.DELVE);
+            if (!settings.manualMana() && !delve) return super.payManaCost(toPay, costPartMana, sa, prompt, matrix, effect);
+            // Stage delve cards until the remaining mana is paid, even with automatic mana selection.
+            try {
+                boolean paid = forge.game.player.PlaySpellAbility.payManaCost(this, toPay, costPartMana, sa, player, prompt, matrix, effect);
+                if (!paid && delve && castPoint != null && undoable(castPoint)) throw new UndoCast();
+                return paid;
+            } catch (CancelDelve cancelled) {
+                if (castPoint != null && undoable(castPoint)) throw new UndoCast();
+                return false;
+            }
         }
 
         @Override
@@ -3426,7 +3469,9 @@ public final class ForgeBackend implements GameBackend {
             Map<SpellAbility, String> tapColors = pendingTapColors == null ? Map.of() : pendingTapColors;
             pendingTaps = null;
             pendingTapColors = null;
-            if (taps != null && !settings.manualMana()) {
+            // A delve preview cannot know how many cards the human will exile. Pay the chosen remainder later.
+            boolean delve = sa.isSpell() && sa.getHostCard().hasKeyword(forge.game.keyword.Keyword.DELVE);
+            if (taps != null && !settings.manualMana() && !delve) {
                 for (SpellAbility ma : taps) tapPreviewSource(ma, tapColors.get(ma));
             }
             if (sa.isSpell() && live()) {
